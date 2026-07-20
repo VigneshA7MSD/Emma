@@ -869,20 +869,48 @@
         category: item.cat
       }).select().maybeSingle();
       if(error){ console.error('Supabase insert error', error); return null; }
-      return data ? data.id : null;
+      return data && data.id ? data.id : item.id;
     }
     try{ await window.storage.set('gallery-items', JSON.stringify(galleryItems), false); return item.id; }
     catch(e){ console.error('Storage error', e); return null; }
   }
 
-  async function deleteGalleryItemRemote(id){
+  async function deleteGalleryItemRemote(id, imageUrl){
     if(sb){
+      if(imageUrl){
+        await deleteStorageObjectByUrl(imageUrl);
+      }
       const { error } = await sb.from('gallery_items').delete().eq('id', id);
       if(error){ console.error('Supabase delete error', error); return false; }
       return true;
     }
     try{ await window.storage.set('gallery-items', JSON.stringify(galleryItems), false); return true; }
     catch(e){ console.error('Storage error', e); return false; }
+  }
+
+  async function deleteStorageObjectByUrl(url){
+    if(!sb || !url) return false;
+    try{
+      const parsed = parseSupabaseStoragePath(url);
+      if(!parsed) return false;
+      const { data, error } = await sb.storage.from(parsed.bucket).remove([parsed.path]);
+      if(error){ console.warn('Storage removal error', error); return false; }
+      return true;
+    }catch(e){ console.warn('Storage removal failed', e); return false; }
+  }
+
+  function parseSupabaseStoragePath(url){
+    try{
+      const u = new URL(url);
+      const parts = u.pathname.split('/');
+      const storageIndex = parts.indexOf('storage');
+      if(storageIndex === -1) return null;
+      const publicIndex = parts.indexOf('public', storageIndex);
+      if(publicIndex === -1 || publicIndex + 1 >= parts.length) return null;
+      const bucket = parts[publicIndex + 1];
+      const path = parts.slice(publicIndex + 2).join('/');
+      return { bucket, path };
+    }catch(e){ return null; }
   }
 
   async function uploadImageFile(file, folder){
@@ -1092,19 +1120,36 @@
 
   function populateAdminForm(){
     document.getElementById('inProfileUrl').value = aboutData.profileUrl || '';
+    document.getElementById('inHeroVideoUrl').value = aboutData.heroVideoUrl || '';
     document.getElementById('inAboutP1').value = aboutData.p1 || '';
     document.getElementById('inAboutP2').value = aboutData.p2 || '';
     document.getElementById('inAboutTags').value = aboutData.tags || '';
     updateProfilePreview();
+    updateHeroVideoPreview();
     renderGalleryAdminList();
   }
 
   document.getElementById('inProfileUrl').addEventListener('input', updateProfilePreview);
+  document.getElementById('inHeroVideoUrl').addEventListener('input', updateHeroVideoPreview);
   function updateProfilePreview(){
     const url = document.getElementById('inProfileUrl').value.trim();
     const preview = document.getElementById('profilePreview');
     if(url){ preview.src = url; preview.style.display = 'block'; }
     else{ preview.style.display = 'none'; }
+  }
+
+  function updateHeroVideoPreview(){
+    const url = document.getElementById('inHeroVideoUrl').value.trim();
+    const preview = document.getElementById('heroVideoPreview');
+    if(url){
+      preview.src = url;
+      preview.style.display = 'block';
+      preview.load();
+      preview.play().catch(() => {});
+    }else{
+      preview.removeAttribute('src');
+      preview.style.display = 'none';
+    }
   }
 
   document.getElementById('saveAbout').addEventListener('click', async () => {
@@ -1113,6 +1158,7 @@
     btn.disabled = true;
     aboutData = {
       profileUrl: document.getElementById('inProfileUrl').value.trim(),
+      heroVideoUrl: aboutData.heroVideoUrl || '',
       p1: document.getElementById('inAboutP1').value.trim() || DEFAULT_ABOUT.p1,
       p2: document.getElementById('inAboutP2').value.trim() || DEFAULT_ABOUT.p2,
       tags: document.getElementById('inAboutTags').value.trim() || DEFAULT_ABOUT.tags
@@ -1139,6 +1185,44 @@
     }
   });
 
+  document.getElementById('heroVideoFileInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const status = document.getElementById('heroVideoStatus');
+    status.textContent = 'Uploading…';
+    const url = await uploadImageFile(file, 'hero');
+    if(url){
+      document.getElementById('inHeroVideoUrl').value = url;
+      updateHeroVideoPreview();
+      status.textContent = 'Uploaded ✓ — click "Save hero video" to publish.';
+    }else{
+      status.textContent = '';
+    }
+  });
+
+  document.getElementById('saveHeroVideo').addEventListener('click', async () => {
+    const btn = document.getElementById('saveHeroVideo');
+    const status = document.getElementById('heroVideoStatus');
+    btn.disabled = true;
+    aboutData.heroVideoUrl = document.getElementById('inHeroVideoUrl').value.trim();
+    const ok = await saveAboutData(aboutData);
+    renderAbout();
+    status.textContent = ok ? 'Saved ✓' : 'Could not save — try again.';
+    btn.disabled = false;
+    setTimeout(() => status.textContent = '', 2500);
+  });
+
+  document.getElementById('removeHeroVideo').addEventListener('click', async () => {
+    const status = document.getElementById('heroVideoStatus');
+    document.getElementById('inHeroVideoUrl').value = '';
+    updateHeroVideoPreview();
+    aboutData.heroVideoUrl = '';
+    await saveAboutData(aboutData);
+    renderAbout();
+    status.textContent = 'Removed ✓';
+    setTimeout(() => status.textContent = '', 2500);
+  });
+
   function renderGalleryAdminList(){
     const list = document.getElementById('galleryAdminList');
     list.innerHTML = '';
@@ -1154,12 +1238,18 @@
         <button class="clay-btn sm danger" data-id="${it.id}">Remove</button>
       `;
       row.querySelector('button').addEventListener('click', async () => {
-        const okDelete = await deleteGalleryItemRemote(it.id);
+        const status = document.getElementById('galleryStatus');
+        status.textContent = 'Deleting…';
+        const okDelete = await deleteGalleryItemRemote(it.id, it.image);
         if(okDelete){
           galleryItems = galleryItems.filter(g => g.id !== it.id);
           renderGalleryAdminList();
           resetGrid();
+          status.textContent = 'Deleted ✓';
+        }else{
+          status.textContent = 'Could not delete — try again.';
         }
+        setTimeout(() => status.textContent = '', 2500);
       });
       list.appendChild(row);
     });
