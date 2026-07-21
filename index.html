@@ -99,11 +99,15 @@
     min-height:88vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding-top:140px;
     position:relative; overflow:hidden; border-radius:0 0 48px 48px;
   }
-  .hero-video{
-    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
-    z-index:0; opacity:0; transition:opacity 1.2s ease;
+  .hero-media{
+    position:absolute; inset:0; width:100%; height:100%; z-index:0;
+    overflow:hidden;
   }
-  .hero-video.ready{ opacity:0.5; }
+  .hero-banner{
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    display:none; opacity:0; transition:opacity 1.2s ease;
+  }
+  .hero-banner.ready{ display:block; opacity:0.5; }
   .hero-video-overlay{
     position:absolute; inset:0; z-index:1;
     background:
@@ -454,7 +458,9 @@
 
 <!-- HERO -->
 <section class="hero" id="top">
-  <video class="hero-video" id="heroVideo" autoplay muted loop playsinline></video>
+  <div class="hero-media">
+    <img class="hero-banner" id="heroVideo" alt="Hero banner" loading="eager">
+  </div>
   <div class="hero-video-overlay"></div>
   <div class="hero-content">
     <div class="eyebrow">✧ a little valentine gallery ✧</div>
@@ -662,21 +668,21 @@
         <div class="admin-status" id="galleryStatus"></div>
       </div>
 
-      <!-- HERO VIDEO TAB -->
+      <!-- HERO BANNER TAB -->
       <div class="admin-section" data-section="hero">
         <div class="field">
-          <label for="inHeroVideoUrl">Hero backdrop video</label>
-          <input type="url" id="inHeroVideoUrl" placeholder="https://example.com/video.mp4">
+          <label>Hero banner slides</label>
+          <div id="heroBannerList" style="display:flex;flex-direction:column;gap:10px;margin-top:8px;"></div>
           <div class="admin-actions" style="margin-top:10px;">
-            <label class="clay-btn sm ghost" for="heroVideoFileInput" style="cursor:pointer;">Upload video</label>
-            <input type="file" id="heroVideoFileInput" accept="video/mp4,video/webm" style="display:none;">
+            <label class="clay-btn sm ghost" for="heroVideoFileInput" style="cursor:pointer;">Upload image/GIF</label>
+            <input type="file" id="heroVideoFileInput" accept="image/*,.gif" style="display:none;">
+            <button class="clay-btn sm ghost" id="addHeroBannerSlideBtn" type="button">Add slider image</button>
           </div>
-          <video id="heroVideoPreview" class="admin-preview" style="display:none; width:120px; height:auto; border-radius:12px;" muted loop autoplay playsinline></video>
-          <div class="hint">Paste a hosted .mp4/.webm link, or upload a file directly (requires Supabase Storage). Keep it under a few MB and short (5–15s, looping) for fast loading.</div>
+          <div class="hint">Upload extra images to build a hero slider. Each image will rotate automatically.</div>
         </div>
         <div class="admin-actions">
-          <button class="clay-btn sm" id="saveHeroVideo">Save hero video</button>
-          <button class="clay-btn sm danger" id="removeHeroVideo">Remove video</button>
+          <button class="clay-btn sm" id="saveHeroVideo">Save banner</button>
+          <button class="clay-btn sm danger" id="removeHeroVideo">Remove banner</button>
         </div>
         <div class="admin-status" id="heroVideoStatus"></div>
       </div>
@@ -702,21 +708,40 @@
   const sb = SUPABASE_CONFIGURED ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
   const MEDIA_BUCKET = 'media'; // must match the bucket created in supabase-setup.sql
 
-  /* Hero backdrop video is now managed from the admin panel (Hero Video tab)
-     and stored in Supabase alongside the rest of the About data. */
+  /* Hero banner is managed from the admin panel and can be a single image/GIF
+     or a list of images/GIFs separated by | for rotation. */
   function applyHeroVideo(url){
-    const video = document.getElementById('heroVideo');
-    if(!video) return;
+    const hero = document.getElementById('heroVideo');
+    if(!hero) return;
+    if(window.heroBannerTimer){ clearInterval(window.heroBannerTimer); window.heroBannerTimer = null; }
     if(!url){
-      video.removeAttribute('src');
-      video.classList.remove('ready');
+      hero.removeAttribute('src');
+      hero.style.display = 'none';
+      hero.classList.remove('ready');
       return;
     }
-    video.src = url;
-    video.classList.remove('ready');
-    video.addEventListener('loadeddata', () => video.classList.add('ready'), { once: true });
-    video.addEventListener('error', () => console.warn('Hero video failed to load:', url), { once: true });
-    video.play().catch(() => { /* autoplay blocked — overlay/gradient still looks fine without it */ });
+    const sources = String(url).split(/\s*\|\s*/).map(s => s.trim()).filter(Boolean);
+    if(!sources.length){
+      hero.removeAttribute('src');
+      hero.style.display = 'none';
+      hero.classList.remove('ready');
+      return;
+    }
+    let index = 0;
+    const show = () => {
+      hero.src = sources[index];
+      hero.style.display = 'block';
+      hero.classList.remove('ready');
+      hero.onload = () => hero.classList.add('ready');
+      hero.onerror = () => console.warn('Hero banner failed to load:', sources[index]);
+    };
+    show();
+    if(sources.length > 1){
+      window.heroBannerTimer = setInterval(() => {
+        index = (index + 1) % sources.length;
+        show();
+      }, 5000);
+    }
   }
 
   /* ===================== PRELOADER ===================== */
@@ -811,7 +836,7 @@
       if(!aboutErr && aboutRow){
         about = {
           profileUrl: aboutRow.profile_url || '',
-          heroVideoUrl: aboutRow.hero_video_url || '',
+          heroVideoUrl: aboutRow.hero_banner_url || aboutRow.hero_video_url || '',
           p1: aboutRow.paragraph_1 || DEFAULT_ABOUT.p1,
           p2: aboutRow.paragraph_2 || DEFAULT_ABOUT.p2,
           tags: aboutRow.tags || DEFAULT_ABOUT.tags
@@ -848,13 +873,14 @@
       const { error } = await sb.from('site_about').upsert({
         id: 1,
         profile_url: data.profileUrl,
-        hero_video_url: data.heroVideoUrl,
+        hero_banner_url: data.heroVideoUrl,
         paragraph_1: data.p1,
         paragraph_2: data.p2,
         tags: data.tags,
         updated_at: new Date().toISOString()
       });
       if(error){ console.error('Supabase save about error', error); return false; }
+      await cleanupUnusedStorageAssets();
       return true;
     }
     try{ await window.storage.set('about', JSON.stringify(data), false); return true; }
@@ -869,6 +895,7 @@
         category: item.cat
       }).select().maybeSingle();
       if(error){ console.error('Supabase insert error', error); return null; }
+      await cleanupUnusedStorageAssets();
       return data && data.id ? data.id : item.id;
     }
     try{ await window.storage.set('gallery-items', JSON.stringify(galleryItems), false); return item.id; }
@@ -923,6 +950,43 @@
     if(error){ console.error('Upload error', error); alert('Upload failed: ' + error.message); return null; }
     const { data } = sb.storage.from(MEDIA_BUCKET).getPublicUrl(path);
     return data ? data.publicUrl : null;
+  }
+
+  async function cleanupUnusedStorageAssets(){
+    if(!sb) return;
+    const usedPaths = new Set();
+    const refs = [aboutData.profileUrl, aboutData.heroVideoUrl, ...galleryItems.map(it => it.image || '')];
+    refs.forEach(url => {
+      const parsed = parseSupabaseStoragePath(url);
+      if(parsed){ usedPaths.add(parsed.path); }
+    });
+
+    for(const prefix of ['profile', 'gallery', 'hero']){
+      const { data, error } = await sb.storage.from(MEDIA_BUCKET).list(prefix);
+      if(error){ console.warn('Storage list error', error); continue; }
+      const toRemove = (data || [])
+        .map(item => item.name ? `${prefix}/${item.name}` : null)
+        .filter(Boolean)
+        .filter(path => !usedPaths.has(path));
+      if(toRemove.length){
+        await sb.storage.from(MEDIA_BUCKET).remove(toRemove);
+      }
+    }
+  }
+
+  function parseSupabaseStoragePath(url){
+    if(!url) return null;
+    try{
+      const u = new URL(url);
+      const parts = u.pathname.split('/');
+      const storageIndex = parts.indexOf('storage');
+      if(storageIndex === -1) return null;
+      const publicIndex = parts.indexOf('public', storageIndex);
+      if(publicIndex === -1 || publicIndex + 1 >= parts.length) return null;
+      const bucket = parts[publicIndex + 1];
+      if(bucket !== MEDIA_BUCKET) return null;
+      return { path: parts.slice(publicIndex + 2).join('/') };
+    }catch(e){ return null; }
   }
 
   /* ============================ STATE ============================ */
@@ -1120,17 +1184,17 @@
 
   function populateAdminForm(){
     document.getElementById('inProfileUrl').value = aboutData.profileUrl || '';
-    document.getElementById('inHeroVideoUrl').value = aboutData.heroVideoUrl || '';
+    heroBannerSlides = (aboutData.heroVideoUrl || '').split(/\s*\|\s*/).map(s => s.trim()).filter(Boolean);
     document.getElementById('inAboutP1').value = aboutData.p1 || '';
     document.getElementById('inAboutP2').value = aboutData.p2 || '';
     document.getElementById('inAboutTags').value = aboutData.tags || '';
     updateProfilePreview();
+    renderHeroBannerList();
     updateHeroVideoPreview();
     renderGalleryAdminList();
   }
 
   document.getElementById('inProfileUrl').addEventListener('input', updateProfilePreview);
-  document.getElementById('inHeroVideoUrl').addEventListener('input', updateHeroVideoPreview);
   function updateProfilePreview(){
     const url = document.getElementById('inProfileUrl').value.trim();
     const preview = document.getElementById('profilePreview');
@@ -1138,14 +1202,59 @@
     else{ preview.style.display = 'none'; }
   }
 
+  let heroBannerSlides = [];
+
+  function renderHeroBannerList(){
+    const list = document.getElementById('heroBannerList');
+    list.innerHTML = '';
+    if(!heroBannerSlides.length){
+      const empty = document.createElement('div');
+      empty.style.fontSize = '0.82rem';
+      empty.style.color = 'var(--plum-soft)';
+      empty.textContent = 'No banner images yet — upload one to start the slider.';
+      list.appendChild(empty);
+      return;
+    }
+    heroBannerSlides.forEach((url, index) => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.gap = '10px';
+      row.style.padding = '8px 10px';
+      row.style.border = '1px solid rgba(232,87,127,0.16)';
+      row.style.borderRadius = '12px';
+      row.style.background = 'rgba(255,255,255,0.5)';
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = 'Hero slide ' + (index + 1);
+      img.style.width = '56px';
+      img.style.height = '56px';
+      img.style.objectFit = 'cover';
+      img.style.borderRadius = '10px';
+      const meta = document.createElement('div');
+      meta.style.flex = '1';
+      meta.style.minWidth = '0';
+      meta.innerHTML = `<div style="font-size:0.8rem;font-weight:700;color:var(--plum);">Slide ${index + 1}</div><div style="font-size:0.72rem;color:var(--plum-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(url)}</div>`;
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'clay-btn sm danger';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', () => {
+        heroBannerSlides.splice(index, 1);
+        renderHeroBannerList();
+      });
+      row.appendChild(img);
+      row.appendChild(meta);
+      row.appendChild(removeBtn);
+      list.appendChild(row);
+    });
+  }
+
   function updateHeroVideoPreview(){
-    const url = document.getElementById('inHeroVideoUrl').value.trim();
     const preview = document.getElementById('heroVideoPreview');
-    if(url){
-      preview.src = url;
+    if(!preview) return;
+    if(heroBannerSlides.length){
+      preview.src = heroBannerSlides[0];
       preview.style.display = 'block';
-      preview.load();
-      preview.play().catch(() => {});
     }else{
       preview.removeAttribute('src');
       preview.style.display = 'none';
@@ -1192,19 +1301,24 @@
     status.textContent = 'Uploading…';
     const url = await uploadImageFile(file, 'hero');
     if(url){
-      document.getElementById('inHeroVideoUrl').value = url;
+      heroBannerSlides.push(url);
+      renderHeroBannerList();
       updateHeroVideoPreview();
-      status.textContent = 'Uploaded ✓ — click "Save hero video" to publish.';
+      status.textContent = 'Uploaded ✓ — click "Save banner" to publish.';
     }else{
       status.textContent = '';
     }
+  });
+
+  document.getElementById('addHeroBannerSlideBtn').addEventListener('click', () => {
+    document.getElementById('heroVideoFileInput').click();
   });
 
   document.getElementById('saveHeroVideo').addEventListener('click', async () => {
     const btn = document.getElementById('saveHeroVideo');
     const status = document.getElementById('heroVideoStatus');
     btn.disabled = true;
-    aboutData.heroVideoUrl = document.getElementById('inHeroVideoUrl').value.trim();
+    aboutData.heroVideoUrl = heroBannerSlides.join('|');
     const ok = await saveAboutData(aboutData);
     renderAbout();
     status.textContent = ok ? 'Saved ✓' : 'Could not save — try again.';
@@ -1214,7 +1328,8 @@
 
   document.getElementById('removeHeroVideo').addEventListener('click', async () => {
     const status = document.getElementById('heroVideoStatus');
-    document.getElementById('inHeroVideoUrl').value = '';
+    heroBannerSlides = [];
+    renderHeroBannerList();
     updateHeroVideoPreview();
     aboutData.heroVideoUrl = '';
     await saveAboutData(aboutData);
@@ -1305,6 +1420,7 @@
     galleryItems = data.gallery;
     renderAbout();
     resetGrid();
+    if(sb){ await cleanupUnusedStorageAssets(); }
     await initAdminAuth();
   })();
 </script>
