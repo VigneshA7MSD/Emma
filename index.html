@@ -910,7 +910,7 @@
 </div>
 
 <!-- BACKGROUND MUSIC -->
-<audio id="bgMusic" loop preload="none"></audio>
+<audio id="bgMusic" loop preload="auto"></audio>
 <button id="musicToggle" class="music-toggle" aria-label="Play background music" aria-pressed="false" style="display:none;">
   <span class="music-icon">♪</span>
 </button>
@@ -976,25 +976,42 @@
   const musicToggle = document.getElementById('musicToggle');
   let musicPlaying = false;
 
-  function applyMusic(url, volume){
-    const vol = (typeof volume === 'number' && !isNaN(volume)) ? volume : 0.6;
-    bgMusic.volume = vol;
-    if(!url){
-      bgMusic.pause();
-      bgMusic.removeAttribute('src');
-      musicToggle.style.display = 'none';
-      musicPlaying = false;
-      musicToggle.classList.remove('playing');
-      musicToggle.setAttribute('aria-pressed', 'false');
-      return;
-    }
-    if(bgMusic.getAttribute('src') !== url){
-      bgMusic.src = url;
-      musicPlaying = false;
-      musicToggle.classList.remove('playing');
-      musicToggle.setAttribute('aria-pressed', 'false');
-    }
-    musicToggle.style.display = 'flex';
+  function tryPlayMusic(){
+  const p = bgMusic.play();
+  if(p && typeof p.catch === 'function'){
+    p.catch(() => {
+      // Most browsers block audio-with-sound autoplay until the visitor interacts with the page.
+      // Start playback on the very first click/tap/keypress anywhere on the site instead.
+      const resume = () => {
+        bgMusic.play().catch(() => {});
+      };
+      document.addEventListener('click', resume, { once:true });
+      document.addEventListener('touchstart', resume, { once:true });
+      document.addEventListener('keydown', resume, { once:true });
+    });
+  }
+}
+
+function applyMusic(url, volume){
+  const vol = (typeof volume === 'number' && !isNaN(volume)) ? volume : 0.6;
+  bgMusic.volume = vol;
+  if(!url){
+    bgMusic.pause();
+    bgMusic.removeAttribute('src');
+    musicToggle.style.display = 'none';
+    musicPlaying = false;
+    musicToggle.classList.remove('playing');
+    musicToggle.setAttribute('aria-pressed', 'false');
+    return;
+  }
+  if(bgMusic.getAttribute('src') !== url){
+    bgMusic.src = url;
+    musicPlaying = false;
+    musicToggle.classList.remove('playing');
+    musicToggle.setAttribute('aria-pressed', 'false');
+    tryPlayMusic();
+  }
+  musicToggle.style.display = 'flex';
   }
 
   musicToggle.addEventListener('click', () => {
