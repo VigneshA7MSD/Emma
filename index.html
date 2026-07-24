@@ -977,20 +977,19 @@
   let musicPlaying = false;
 
   function tryPlayMusic(){
-  const p = bgMusic.play();
-  if(p && typeof p.catch === 'function'){
-    p.catch(() => {
-      // Most browsers block audio-with-sound autoplay until the visitor interacts with the page.
-      // Start playback on the very first click/tap/keypress anywhere on the site instead.
-      const resume = () => {
-        bgMusic.play().catch(() => {});
-      };
-      document.addEventListener('click', resume, { once:true });
-      document.addEventListener('touchstart', resume, { once:true });
-      document.addEventListener('keydown', resume, { once:true });
-    });
+  bgMusic.play().catch(() => {
+    // Sound-on autoplay was blocked by the browser. Start it muted right away instead
+    // (muted autoplay is always allowed), then unmute on the visitor's very first interaction.
+    bgMusic.muted = true;
+    bgMusic.play().catch(() => {});
+    const unmute = () => {
+      bgMusic.muted = false;
+    };
+    document.addEventListener('click', unmute, { once:true });
+    document.addEventListener('touchstart', unmute, { once:true });
+    document.addEventListener('keydown', unmute, { once:true });
+  });
   }
-}
 
 function applyMusic(url, volume){
   const vol = (typeof volume === 'number' && !isNaN(volume)) ? volume : 0.6;
